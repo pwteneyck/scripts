@@ -1,0 +1,69 @@
+#!/usr/bin/python
+
+import argparse
+import requests
+import sys
+
+# TODO cache the token somewhere
+token = ""
+
+def authenticate():
+    r = requests.post('https://wap.tplinkcloud.com', json={"method": "login","params": {"appType":
+        "Kasa_Android","cloudUserName": "pwteneyck@gmail.com","cloudPassword": "6\\6overlord","terminalUUID":
+        "MY_UUID_v4"}})
+    return r.json()['result']['token']
+
+def list_devices():
+    global token
+    if token == "":
+        token = authenticate()
+    r = requests.post('https://wap.tplinkcloud.com?token=' + token, json={"method":"getDeviceList"})
+    devices = {}
+    for device in r.json()['result']['deviceList']:
+        devices[device['alias']] = {'appServerUrl':device['appServerUrl'],'deviceId':device['deviceId']}
+    return devices
+
+def set_device_state_by_alias(alias, state):
+    device = list_devices()[alias]
+    return set_device_state(device['deviceId'], state, device['appServerUrl'])
+
+def set_device_state(deviceId, state, appServerUrl):
+    global token
+    if token == "":
+        token = authenticate()
+    request_json = {'method':'passthrough', 'params': {'deviceId': deviceId,
+        'requestData': '{\"system\":{\"set_relay_state\":{\"state\":' + state + '}}}' }}
+    r = requests.post(appServerUrl + '?token=' + token, json=request_json)
+    return r.json()
+
+op_parser = argparse.ArgumentParser()
+subparsers = op_parser.add_subparsers(help='sub-command help')
+
+ls_parser = subparsers.add_parser('ls', help='List available devices')
+ls_parser.add_argument('-op', help=argparse.SUPPRESS, default='ls')
+
+set_parser = subparsers.add_parser('set', help='Set a device state')
+set_parser.add_argument('-op', help=argparse.SUPPRESS, default='set')
+set_parser.add_argument('-s', '--state', help='The state the device should be set to (usually 0 or 1)', required=True)
+set_parser.add_argument('-a', '--alias', help='A device alias to operate on', default=False)
+set_parser.add_argument('-d', '--deviceId', help='A device ID to operate on', default=False)
+set_parser.add_argument('-e', '--endpoint', help='A tplink endpoint to send requests to', default=False)
+
+args = op_parser.parse_args()
+if args.op == 'ls':
+    devices = list_devices()
+    for alias, details in devices.items():
+        print('\t' + alias + ':')
+        print('\t\t' + 'appServerUrl: ' + details['appServerUrl'])
+        print('\t\t' + 'deviceId:     ' + details['deviceId'])
+        print('')
+elif args.op == 'set':
+    if args.alias:
+        if args.deviceId or args.endpoint:
+            print('You may not specify deviceId or endpoint when you have provided an alias.')
+            sys.exit()
+        print(set_device_state_by_alias(args.alias, args.state)['error_code'])
+    elif args.deviceId and args.endpoint:
+        print(set_device_state(args.deviceId, args.state, args.endpoint)['error_code'])
+    else:
+        print('You must specify either a device alias or both a device id and a tplink endpoint')
